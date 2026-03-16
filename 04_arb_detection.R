@@ -12,8 +12,8 @@
 #      sell the short and buy the long for a riskless profit.
 #
 #   3. Model residuals — market IV vs SVI fitted IV. Contracts more
-#      than 3% rich or cheap relative to the fit are flagged as
-#      potential mispricings worth investigating.
+#      than 3 vol points rich or cheap relative to the fit are flagged
+#      as potential mispricings worth investigating.
 #
 # Inputs  : data/svi_fits.rds  (from 03_svi_calibration.R)
 # Outputs : data/arb_results.rds
@@ -23,8 +23,6 @@ library(tidyr)
 library(readr)
 
 
-# SVI total variance formula — kept here so this script is self-contained
-# and does not depend on 03_svi_calibration.R being loaded in the session.
 svi_w <- function(k, params) {
   a <- params[1]; b <- params[2]; rho <- params[3]
   m <- params[4]; s <- params[5]
@@ -32,14 +30,6 @@ svi_w <- function(k, params) {
 }
 
 
-# Checks butterfly arbitrage for a single fitted SVI slice using the
-# Gatheral-Jacquier local density condition:
-#
-#   g(k) = (1 - k*w'/(2w))^2 - (w'^2/4)*(1/w + 1/4) + w''/2 >= 0
-#
-# g(k) is proportional to the risk-neutral density. Any region where
-# g < 0 is a butterfly arbitrage. We evaluate on 500 points so we
-# can pinpoint the exact moneyness range of any violation.
 check_butterfly <- function(fit) {
   k   <- seq(-0.35, 0.35, length.out = 500)
   w   <- sapply(k, function(ki) svi_w(ki, fit$params))
@@ -67,7 +57,6 @@ check_butterfly <- function(fit) {
 }
 
 
-# Checks calendar spread arbitrage across all fitted slices.
 check_calendar <- function(fits) {
   k_check    <- seq(-0.2, 0.2, by = 0.02)
   exp_sorted <- names(fits)[order(sapply(fits, function(f) f$T))]
@@ -103,11 +92,9 @@ check_calendar <- function(fits) {
 }
 
 
-# Computes per-contract model residuals for BOTH calls and puts.
-# The type column ("call" / "put") is preserved so the Shiny table
-# can display and colour-code each contract type separately.
-# Residuals expressed in absolute vol points and as % of fitted IV.
-# Contracts more than 3% away from the fit are flagged.
+# residual_pct = (iv - iv_svi) * 100  →  vol points difference (e.g. +2.3 pp)
+# This is more interpretable than a ratio — a 3 vol point threshold means
+# the market is pricing 3 percentage points away from the SVI fit.
 check_residuals <- function(iv_df, fits) {
   iv_df %>%
     filter(type == "call") %>%
@@ -120,16 +107,15 @@ check_residuals <- function(iv_df, fits) {
         else sqrt(max(svi_w(log_strike, fit$params) / T, 0))
       },
       residual     = iv - iv_svi,
-      residual_pct = (iv - iv_svi) / iv_svi * 100,
-      is_rich      = residual_pct >  3,
-      is_cheap     = residual_pct < -3
+      residual_pct = (iv - iv_svi) * 100,   # vol points, not relative ratio
+      is_rich      = residual_pct >  3,      # market 3 vpts above model
+      is_cheap     = residual_pct < -3       # market 3 vpts below model
     ) %>%
     ungroup() %>%
     filter(!is.na(iv_svi))
 }
 
 
-# Orchestrates all three arbitrage checks and writes results to disk.
 detect_all_arb <- function() {
   obj       <- readRDS("data/svi_fits.rds")
   iv_df     <- obj$iv_df
@@ -138,28 +124,22 @@ detect_all_arb <- function() {
   
   cat("Running arbitrage detection on", length(fits), "fitted slices\n\n")
   
-  # 1. Butterfly
   butterfly_df <- bind_rows(lapply(fits, check_butterfly))
   n_bf         <- sum(butterfly_df$butterfly_viol)
   cat("Butterfly violations:", n_bf, "points")
   if (n_bf == 0) cat("  — surface is butterfly-free\n") else cat("\n")
   
-  # 2. Calendar
   cal_arb_df <- check_calendar(fits)
   n_cal      <- sum(cal_arb_df$cal_arb_viol)
   cat("Calendar violations: ", n_cal, "points")
   if (n_cal == 0) cat("  — surface is calendar-free\n") else cat("\n")
   
-  # 3. Residuals (calls + puts)
   residuals_df <- check_residuals(iv_df, fits)
   n_rich       <- sum(residuals_df$is_rich,  na.rm = TRUE)
   n_cheap      <- sum(residuals_df$is_cheap, na.rm = TRUE)
-  cat("Rich  (market IV > SVI + 3%):", n_rich,  "contracts\n")
-  cat("Cheap (market IV < SVI - 3%):", n_cheap, "contracts\n")
+  cat("Rich  (market IV > SVI + 3 vpts):", n_rich,  "contracts\n")
+  cat("Cheap (market IV < SVI - 3 vpts):", n_cheap, "contracts\n")
   
-  # 4. Composite arb score per contract — used to drive the heatmap.
-  # Base score is |residual_pct|; contracts that breach the 3% threshold
-  # get an additional +10 to make them visually stand out in the heatmap.
   arb_score_df <- residuals_df %>%
     mutate(
       arb_score = abs(residual_pct) + ifelse(is_rich | is_cheap, 10, 0)
