@@ -133,7 +133,7 @@ fit_all_svi <- function() {
   for (d in expiries) {
     slice <- iv_df %>% filter(days_exp == d, type == "call")
     
-    if (nrow(slice) < 5) {
+    if (nrow(slice) < 3) {
       cat("Skipping", d, "days — fewer than 5 call contracts\n")
       next
     }
