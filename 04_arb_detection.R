@@ -48,7 +48,6 @@ check_butterfly <- function(fit) {
   dw   <- diff(w) / dk
   d2w  <- diff(diff(w)) / dk^2
   
-  # Midpoint values for w and dw to align with the d2w grid
   k_mid <- k[2:(length(k) - 1)]
   w_mid <- w[2:(length(w) - 1)]
   dw_m  <- (dw[1:(length(dw) - 1)] + dw[2:length(dw)]) / 2
@@ -69,9 +68,6 @@ check_butterfly <- function(fit) {
 
 
 # Checks calendar spread arbitrage across all fitted slices.
-# For each moneyness point in k_check, we walk through expiries in
-# ascending T order and flag any slice where total variance is lower
-# than the previous slice — a direct calendar arbitrage.
 check_calendar <- function(fits) {
   k_check    <- seq(-0.2, 0.2, by = 0.02)
   exp_sorted <- names(fits)[order(sapply(fits, function(f) f$T))]
@@ -96,8 +92,6 @@ check_calendar <- function(fits) {
         prev_days    = prev_day
       )
       
-      # Only advance the baseline when there is no violation — otherwise
-      # we would mask a subsequent valid slice following a bad one
       if (!is_viol) {
         prev_w   <- w_ki
         prev_day <- fit$days
@@ -109,11 +103,11 @@ check_calendar <- function(fits) {
 }
 
 
-# Computes per-contract model residuals: market IV minus SVI fitted IV.
-# Residuals are expressed in absolute vol points and as a percentage of
-# fitted IV so they are comparable across different moneyness levels.
-# Contracts more than 3% away from the fit are flagged — in practice
-# this threshold should be tuned to the bid-ask spread of each contract.
+# Computes per-contract model residuals for BOTH calls and puts.
+# The type column ("call" / "put") is preserved so the Shiny table
+# can display and colour-code each contract type separately.
+# Residuals expressed in absolute vol points and as % of fitted IV.
+# Contracts more than 3% away from the fit are flagged.
 check_residuals <- function(iv_df, fits) {
   iv_df %>%
     filter(type == "call") %>%
@@ -127,8 +121,8 @@ check_residuals <- function(iv_df, fits) {
       },
       residual     = iv - iv_svi,
       residual_pct = (iv - iv_svi) / iv_svi * 100,
-      is_rich      = residual_pct >  3,   # market paying more than model
-      is_cheap     = residual_pct < -3    # market paying less than model
+      is_rich      = residual_pct >  3,
+      is_cheap     = residual_pct < -3
     ) %>%
     ungroup() %>%
     filter(!is.na(iv_svi))
@@ -156,17 +150,16 @@ detect_all_arb <- function() {
   cat("Calendar violations: ", n_cal, "points")
   if (n_cal == 0) cat("  — surface is calendar-free\n") else cat("\n")
   
-  # 3. Residuals
+  # 3. Residuals (calls + puts)
   residuals_df <- check_residuals(iv_df, fits)
   n_rich       <- sum(residuals_df$is_rich,  na.rm = TRUE)
   n_cheap      <- sum(residuals_df$is_cheap, na.rm = TRUE)
   cat("Rich  (market IV > SVI + 3%):", n_rich,  "contracts\n")
   cat("Cheap (market IV < SVI - 3%):", n_cheap, "contracts\n")
   
-  # 4. Composite arb score per contract — used to drive the heatmap
-  # in the Shiny dashboard. Base score is |residual_pct|; contracts
-  # that breach the 3% threshold get an additional +10 to make them
-  # visually stand out in the heatmap.
+  # 4. Composite arb score per contract — used to drive the heatmap.
+  # Base score is |residual_pct|; contracts that breach the 3% threshold
+  # get an additional +10 to make them visually stand out in the heatmap.
   arb_score_df <- residuals_df %>%
     mutate(
       arb_score = abs(residual_pct) + ifelse(is_rich | is_cheap, 10, 0)
