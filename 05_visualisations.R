@@ -3,7 +3,7 @@
 # Can be sourced standalone or loaded by the Shiny app (in which case
 # the standalone run block at the bottom is skipped via shiny_running).
 #
-# Outputs written to ../plots/:
+# Outputs written to plots/:
 #   01_iv_surface_3d.html      — interactive 3D SVI surface
 #   02_smile_plots.png         — per-expiry smile + SVI fit overlay
 #   03_arb_heatmap.png         — arb score heatmap across (k, T)
@@ -11,8 +11,8 @@
 #   05_calendar_arb.png        — total variance term structure
 #   06_residuals_3d.html       — interactive 3D residuals surface
 #
-# Inputs  : ../data/arb_results.rds  (from 04_arb_detection.R)
-#           ../data/svi_fits.rds     (from 03_svi_calibration.R)
+# Inputs  : data/arb_results.rds  (from 04_arb_detection.R)
+#           data/svi_fits.rds     (from 03_svi_calibration.R)
 
 library(ggplot2)
 library(plotly)
@@ -86,8 +86,8 @@ svi_w <- function(k, params) {
 # objects are visible to all plot functions without passing them as
 # arguments — keeps the function signatures clean for Shiny usage.
 load_viz_data <- function() {
-  arb_path <- "../data/arb_results.rds"
-  svi_path <- "../data/svi_fits.rds"
+  arb_path <- "data/arb_results.rds"
+  svi_path <- "data/svi_fits.rds"
   if (!file.exists(arb_path)) stop("arb_results.rds not found — run 04_arb_detection.R first")
   if (!file.exists(svi_path)) stop("svi_fits.rds not found — run 03_svi_calibration.R first")
   
@@ -108,9 +108,9 @@ load_viz_data <- function() {
 
 
 # Wraps ggsave with a tryCatch so a single failed plot does not abort
-# the rest of the run. ../plots/ is created if it does not exist.
+# the rest of the run. plots/ is created if it does not exist.
 safe_ggsave <- function(filename, plot, width, height, dpi = 180) {
-  dir.create("../plots", showWarnings = FALSE, recursive = TRUE)
+  dir.create("plots", showWarnings = FALSE, recursive = TRUE)
   tryCatch(
     ggsave(filename, plot, width = width, height = height, dpi = dpi, bg = BG),
     error = function(e) cat("Could not save", filename, ":", e$message, "\n")
@@ -118,7 +118,7 @@ safe_ggsave <- function(filename, plot, width, height, dpi = 180) {
 }
 
 safe_savewidget <- function(fig, filename) {
-  dir.create("../plots", showWarnings = FALSE, recursive = TRUE)
+  dir.create("plots", showWarnings = FALSE, recursive = TRUE)
   tryCatch(
     saveWidget(fig, filename, selfcontained = TRUE),
     error = function(e) cat("Could not save", filename, ":", e$message, "\n")
@@ -221,7 +221,7 @@ plot_3d_surface <- function() {
       margin = list(l = 0, r = 0, t = 60, b = 0)
     )
   
-  safe_savewidget(fig, "../plots/01_iv_surface_3d.html")
+  safe_savewidget(fig, "plots/01_iv_surface_3d.html")
   cat("01_iv_surface_3d.html saved\n")
   return(fig)
 }
@@ -277,7 +277,7 @@ plot_smiles <- function() {
     theme_vsl(base_size = 14) +
     theme(legend.position = "bottom")
   
-  safe_ggsave("../plots/02_smile_plots.png", p, width = 20, height = 14)
+  safe_ggsave("plots/02_smile_plots.png", p, width = 20, height = 14)
   cat("02_smile_plots.png saved\n")
   return(p)
 }
@@ -325,7 +325,7 @@ plot_arb_heatmap <- function() {
     theme_vsl(base_size = 14) +
     theme(legend.position = "bottom")
   
-  safe_ggsave("../plots/03_arb_heatmap.png", p, width = 18, height = 11)
+  safe_ggsave("plots/03_arb_heatmap.png", p, width = 18, height = 11)
   cat("03_arb_heatmap.png saved\n")
   return(p)
 }
@@ -377,7 +377,7 @@ plot_butterfly <- function() {
     theme_vsl(base_size = 14) +
     theme(legend.position = "top", legend.text = element_text(size = 13))
   
-  safe_ggsave("../plots/04_butterfly_violations.png", p, width = 20, height = 14)
+  safe_ggsave("plots/04_butterfly_violations.png", p, width = 20, height = 14)
   cat("04_butterfly_violations.png saved\n")
   return(p)
 }
@@ -423,7 +423,7 @@ plot_calendar <- function() {
     theme_vsl(base_size = 14) +
     theme(legend.position = "bottom")
   
-  safe_ggsave("../plots/05_calendar_arb.png", p, width = 16, height = 10)
+  safe_ggsave("plots/05_calendar_arb.png", p, width = 16, height = 10)
   cat("05_calendar_arb.png saved\n")
   return(p)
 }
@@ -518,7 +518,7 @@ plot_3d_residuals <- function() {
       margin = list(l = 0, r = 0, t = 60, b = 0)
     )
   
-  safe_savewidget(fig, "../plots/06_residuals_3d.html")
+  safe_savewidget(fig, "plots/06_residuals_3d.html")
   cat("06_residuals_3d.html saved\n")
   return(fig)
 }
@@ -535,5 +535,5 @@ if (!exists("shiny_running")) {
   plot_butterfly()
   plot_calendar()
   plot_3d_residuals()
-  cat("\nAll plots saved to ../plots/\n")
+  cat("\nAll plots saved to plots/\n")
 }
