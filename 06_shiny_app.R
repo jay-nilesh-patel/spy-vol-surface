@@ -175,6 +175,36 @@ ui <- fluidPage(
     }
     tbody tr:hover td { background-color: #04060F !important; }
 
+    .vs-fit-stats {
+      display: flex; gap: 12px; flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .vs-fit-badge {
+      background: #04060F; border: 1px solid #1C2033;
+      border-radius: 3px; padding: 10px 16px;
+      display: flex; flex-direction: column; min-width: 130px;
+    }
+    .vs-fit-badge.rmse  { border-left: 3px solid #4CA3FF; }
+    .vs-fit-badge.mae   { border-left: 3px solid #F0B35A; }
+    .vs-fit-badge.maxe  { border-left: 3px solid #FF4D6D; }
+    .vs-fit-badge-label {
+      font-size: 9.5px; text-transform: uppercase;
+      letter-spacing: 0.14em; color: #6B7491; line-height: 1;
+    }
+    .vs-fit-badge-value {
+      font-size: 18px; font-weight: 600; margin-top: 4px;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    }
+    .vs-fit-badge.rmse .vs-fit-badge-value { color: #4CA3FF; }
+    .vs-fit-badge.mae  .vs-fit-badge-value { color: #F0B35A; }
+    .vs-fit-badge.maxe .vs-fit-badge-value { color: #FF4D6D; }
+    .vs-fit-badge-sub {
+      font-size: 9px; color: #3A405A; margin-top: 2px;
+    }
+
+    td.rich  { color: #FF4D6D !important; }
+    td.cheap { color: #2ECC9A !important; }
+
     ::-webkit-scrollbar       { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #000000; }
     ::-webkit-scrollbar-thumb { background: #1C2033; border-radius: 3px; }
@@ -254,7 +284,22 @@ ui <- fluidPage(
                                        choices = NULL, width = "160px")
                          )
                      ),
-                     plotlyOutput("plot_smiles", height = "650px")
+                     plotlyOutput("plot_smiles", height = "650px"),
+                     
+                     div(style = "margin-top: 24px;",
+                         div(class = "vs-panel-header",
+                             div(
+                               div(class = "vs-panel-title", "SVI Fit Quality"),
+                               div(class = "vs-panel-sub",
+                                   "Per-contract residuals  \u00b7  green = cheap vs model  \u00b7  red = rich vs model")
+                             ),
+                             div(class = "vs-panel-tag", "ACCURACY")
+                         ),
+                         div(class = "vs-panel-body",
+                             uiOutput("smile_fit_badges"),
+                             uiOutput("smile_residual_table")
+                         )
+                     )
                  )
              )
     ),
@@ -348,13 +393,8 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
-  iv_data <- tryCatch(readRDS("../data/iv_surface.rds"), error = function(e) NULL)
+  iv_data <- tryCatch(readRDS("data/iv_surface.rds"), error = function(e) NULL)
   
-  # Populate dropdowns with actual calendar dates.
-  # setNames(value, label): value = character days_exp (used internally
-  # by all filter calls via as.numeric()), label = "DD/MM/YYYY" shown
-  # in the dropdown. Must be character not numeric — Shiny drops labels
-  # on numeric named vectors.
   observe({
     if (is.null(iv_data)) return(NULL)
     
@@ -381,15 +421,18 @@ server <- function(input, output, session) {
                       selected = date_choices[1])
   })
   
-  # Top bar stats
   output$topbar_stats <- renderUI({
     tryCatch({
       if (is.null(iv_data)) stop("no data")
-      S0     <- iv_data$spot
-      n_tot  <- nrow(iv_data$iv_df)
-      n_exp  <- length(unique(iv_data$iv_df$days_exp))
-      fetch  <- format(iv_data$fetch_time, "%H:%M")
-      atm_iv <- mean(
+      S0      <- iv_data$spot
+      n_tot   <- nrow(iv_data$iv_df)
+      n_exp   <- length(unique(iv_data$iv_df$days_exp))
+      ft      <- iv_data$fetch_time
+      gmt_str <- format(ft, "%d %b %Y  %H:%M", tz = "UTC")
+      est_str <- format(ft, "%H:%M",            tz = "America/New_York")
+      tz_lbl  <- format(ft, "%Z",               tz = "America/New_York")
+      fetch_str <- paste0(gmt_str, " GMT / ", est_str, " ", tz_lbl)
+      atm_iv  <- mean(
         iv_data$iv_df$iv[abs(iv_data$iv_df$log_strike) < 0.05],
         na.rm = TRUE
       )
@@ -408,7 +451,7 @@ server <- function(input, output, session) {
               div(class = "vs-stat-value", n_tot)),
           div(class = "vs-stat",
               div(class = "vs-stat-label", "FETCHED"),
-              div(class = "vs-stat-value", fetch))
+              div(class = "vs-stat-value", fetch_str))
       )
     }, error = function(e) {
       div(style = "color:#6B7491; font-size:11px;",
@@ -416,9 +459,6 @@ server <- function(input, output, session) {
     })
   })
   
-  # 3D IV surface — rebuilds on iv_cap or surface_mode change.
-  # Single expiry mode duplicates the matrix into two rows so Plotly
-  # renders it as a flat ribbon instead of refusing a 1-row surface.
   output$plot_3d_surface <- renderPlotly({
     req(input$iv_cap, input$surface_mode)
     
@@ -431,6 +471,21 @@ server <- function(input, output, session) {
       fits[sapply(fits, function(f) f$days == sel_days)]
     } else {
       fits
+    }
+    
+    if (length(fits_use) == 0) {
+      return(
+        plotly_empty() %>%
+          layout(
+            title = list(
+              text = "NO SVI FIT FOR THIS EXPIRY \u2014 too few contracts at calibration time",
+              font = list(color = "#FF4D6D", size = 13,
+                          family = "system-ui, sans-serif")
+            ),
+            paper_bgcolor = BG,
+            plot_bgcolor  = BG
+          )
+      )
     }
     
     exp_sorted <- names(fits_use)[order(sapply(fits_use, function(f) f$T))]
@@ -520,8 +575,6 @@ server <- function(input, output, session) {
       )
   })
   
-  # Per-expiry smile — SVI fit as amber line, market IV as dots
-  # coloured by residual_pct (green = cheap, red = rich vs model).
   output$plot_smiles <- renderPlotly({
     req(iv_data, input$smile_expiry)
     sel    <- as.numeric(input$smile_expiry)
@@ -590,8 +643,80 @@ server <- function(input, output, session) {
       )
   })
   
-  # Arb heatmap — scores bucketed to 2% moneyness bins.
-  # Text colour flips to black on very bright tiles (score > 18).
+  output$smile_fit_badges <- renderUI({
+    req(input$smile_expiry)
+    sel <- as.numeric(input$smile_expiry)
+    df  <- resid_df %>% filter(days_exp == sel)
+    if (nrow(df) == 0) return(NULL)
+    
+    rmse <- sqrt(mean(df$residual_pct^2, na.rm = TRUE))
+    mae  <- mean(abs(df$residual_pct),   na.rm = TRUE)
+    maxe <- max(abs(df$residual_pct),    na.rm = TRUE)
+    
+    div(class = "vs-fit-stats",
+        div(class = "vs-fit-badge rmse",
+            div(class = "vs-fit-badge-label", "RMSE"),
+            div(class = "vs-fit-badge-value", sprintf("%.3f%%", rmse)),
+            div(class = "vs-fit-badge-sub",   "root mean sq error")
+        ),
+        div(class = "vs-fit-badge mae",
+            div(class = "vs-fit-badge-label", "MAE"),
+            div(class = "vs-fit-badge-value", sprintf("%.3f%%", mae)),
+            div(class = "vs-fit-badge-sub",   "mean abs error")
+        ),
+        div(class = "vs-fit-badge maxe",
+            div(class = "vs-fit-badge-label", "MAX |ERROR|"),
+            div(class = "vs-fit-badge-value", sprintf("%.3f%%", maxe)),
+            div(class = "vs-fit-badge-sub",   "worst single contract")
+        )
+    )
+  })
+  
+  output$smile_residual_table <- renderUI({
+    req(input$smile_expiry)
+    sel <- as.numeric(input$smile_expiry)
+    df  <- resid_df %>%
+      filter(days_exp == sel) %>%
+      arrange(log_strike) %>%
+      mutate(
+        strike_price = round(S0 * exp(log_strike), 2),
+        flag = case_when(
+          residual_pct >  3 ~ "RICH",
+          residual_pct < -3 ~ "CHEAP",
+          TRUE              ~ "FAIR"
+        )
+      )
+    if (nrow(df) == 0) return(NULL)
+    
+    header <- tags$thead(
+      tags$tr(
+        tags$th("LOG-K"),
+        tags$th("STRIKE"),
+        tags$th("MARKET IV"),
+        tags$th("SVI IV"),
+        tags$th("RESIDUAL (VOL PTS)"),
+        tags$th("RESIDUAL %"),
+        tags$th("FLAG")
+      )
+    )
+    
+    rows <- lapply(seq_len(nrow(df)), function(i) {
+      flag <- df$flag[i]
+      cls  <- switch(flag, RICH = "rich", CHEAP = "cheap", "")
+      tags$tr(
+        tags$td(sprintf("%.4f",   df$log_strike[i])),
+        tags$td(sprintf("%.2f",   df$strike_price[i])),
+        tags$td(sprintf("%.2f%%", df$iv[i]     * 100)),
+        tags$td(sprintf("%.2f%%", df$iv_svi[i] * 100)),
+        tags$td(sprintf("%+.4f",  df$residual[i])),
+        tags$td(class = cls, sprintf("%+.3f%%", df$residual_pct[i])),
+        tags$td(class = cls, flag)
+      )
+    })
+    
+    tags$table(header, tags$tbody(rows))
+  })
+  
   output$plot_arb_heatmap <- renderPlotly({
     heatmap_df <- arb_score_df %>%
       mutate(strike_bucket = round(log_strike / 0.02) * 0.02) %>%
@@ -683,10 +808,9 @@ server <- function(input, output, session) {
   output$plot_calendar     <- renderPlot({ plot_calendar()     }, res = 120)
   output$plot_3d_residuals <- renderPlotly({ plot_3d_residuals() })
   
-  # Summary table — IV columns as %, call_skew NA shown as em-dash,
-  # expiry_label column included so actual dates appear in the table.
   output$summary_table <- renderTable({
     tryCatch({
+      if(is.null(iv_data)) return(data.frame(Error = "No data"))
       iv_data$summary %>%
         mutate(
           atm_iv    = paste0(round(atm_iv    * 100, 1), "%"),
